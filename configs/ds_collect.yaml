@@ -1,0 +1,10 @@
+action: DatasetCollector
+source:
+  file: '/home/mokira3d48/Documents/datasets/Large Captcha Dataset-82329/Large_Captcha_Dataset/'
+
+target:
+  dataset_dir: outputs/datasets/
+  train_prob: 0.80
+  valid_prob: 0.10
+  test_prob: 0.10
+  samples_count: 22520376

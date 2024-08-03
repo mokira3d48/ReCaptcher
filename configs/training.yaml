@@ -1,0 +1,34 @@
+action: Training
+name: transformer
+n_epochs: 200
+report_dir: outputs/runs/
+savedModel: outputs/transformer.pt
+savingStep: 5
+
+LabelSmoothing:
+  epsilon: 0.1
+
+optim:
+  learning_rate: 0.001
+  beta: [0.9, 0.98]
+  eps: 0.000000001
+  warmup: 4000
+  max_iters: 20000
+
+checkpoint:
+  folder: outputs/transformer_ckp/
+  last_ckp_count: 3
+
+dataset:
+  train: outputs/datasets/train.csv
+  valid: outputs/datasets/valid.csv
+  test: outputs/datasets/test.csv
+  src_column_name: french
+  tgt_column_name: english
+  batch_size: 32
+  n_workers: 0
+
+model:
+  configFile: configs/transformer.yaml
+  src_vocab: outputs/vocab/french_vocab.json
+  tgt_vocab: outputs/vocab/english_vocab.json

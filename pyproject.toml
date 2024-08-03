@@ -16,7 +16,7 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]
-keywords = ["character-recognition", "ocr", "captcha"]
+keywords = ["character-recognition", "ocr", "captcha-solver"]
 dependencies = [
     "requests>=2.25.1",
 ]

@@ -1,0 +1,11 @@
+action: Prediction
+max_len: null
+
+model:
+  configFile: configs/transformer.yaml
+  saved: outputs/transformer.pt
+  checkpoint: null
+
+vocab:
+  source: outputs/vocab/french_vocab.json
+  target: outputs/vocab/fon_vocab.json
