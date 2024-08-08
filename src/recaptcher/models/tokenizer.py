@@ -9,7 +9,7 @@ LOG = logging.getLogger(__name__)
 class CharacterTokenizer(object):
     """Character tokenization"""
 
-    def __init__(self, pad_token=None, unk_token=None):
+    def __init__(self, pad_token=False, unk_token=False):
         self.vocab = []
         self.pad_token = pad_token
         self.unk_token = unk_token
@@ -92,22 +92,20 @@ class CharacterTokenizer(object):
         return output_strings
 
 
-class CharactersTokenizerTrainer(object):
+class Trainer(object):
     """Represent algorithm of training of a character tokenizer model"""
 
-    def __init__(self, model, text=None, file_path=None):
+    def __init__(self, model):
         self.model = model
-        self.text = text
-        self.file_path = file_path
 
-    def fit(self):
+    def fit(self, text=None, file_path=None):
         """Function which fit the model of character tokenizer"""
         string_text = ''
-        if self.text:
-            string_text = self.text
+        if text:
+            string_text = text
 
         if not string_text:
-            if self.file_path and os.path.isfile(self.file_path):
+            if file_path and os.path.isfile(file_path):
                 with open(string_text, mode='r', encoding='UTF-8') as file:
                     string_text = file.read()
 
@@ -117,15 +115,23 @@ class CharactersTokenizerTrainer(object):
 
         pad = self.model.pad_token
         unk = self.model.unk_token
-        if pad:
-            self.model.vocab.append('<pad>')
+        if pad and '[pad]' not in self.model.vocab:
+            self.model.vocab.append('[pad]')
 
-        if unk:
-            self.model.vocab.append('<unk>')
+        if unk and '[unk]' not in self.model.vocab:
+            self.model.vocab.append('[unk]')
 
         for character in string_text:
             if character in self.model.vocab:
                 continue
 
             self.model.vocab.append(character)
+
+        self.model.vocab.sort()
+
+    def save(self, model_file_path):
+        """Method of model saving into json file"""
+        with open(model_file_path, mode='w', encoding='UTF-8') as file:
+            stringify = json.dumps({'vocab': self.model.vocab})
+            file.write(stringify)
 

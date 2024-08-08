@@ -1,6 +1,6 @@
 action: DatasetCollector
 source:
-  file: '/home/mokira3d48/Documents/datasets/Large Captcha Dataset-82329/Large_Captcha_Dataset/'
+  file: /home/mokira3d48/Documents/datasets/Large Captcha Dataset-82329/Large_Captcha_Dataset/
 
 target:
   dataset_dir: outputs/datasets/

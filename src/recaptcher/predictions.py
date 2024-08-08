@@ -2,8 +2,8 @@ import logging
 import time
 
 import torch
-from .models.transformer import Transformer, Inference
-from tokenizers import Tokenizer
+# from .models.transformer import Transformer, Inference
+# from tokenizers import Tokenizer
 
 
 LOG = logging.getLogger(__name__)

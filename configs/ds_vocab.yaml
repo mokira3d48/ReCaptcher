@@ -1,8 +1,8 @@
 action: DatasetVocabBuilder
-dataset_files: ["outputs/datasets/train",
-                "outputs/datasets/valid",
-                "outputs/datasets/test"]
+dataset_dirs: ["outputs/datasets/train",
+               "outputs/datasets/valid",
+               "outputs/datasets/test"]
 
 vocab_file: outputs/datasets/vocab.json
-pad_token: <pad>
-unk_token: <unk>
+pad_token: 1  # 1 -> true, 0 -> false
+unk_token: 1  # 1 -> true, 0 -> false

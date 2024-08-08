@@ -7,11 +7,13 @@ import numpy as np
 import torch
 # from tqdm import tqdm
 from torch.utils.data import Dataset
+from .models.tokenizer import CharacterTokenizer, Trainer as TokenizerTrainer
+
 
 LOG = logging.getLogger(__name__)
 
 
-class DatasetCollector(object):
+class DatasetCollector:
     """Dataset collection"""
 
     def __init__(self, **kwargs):
@@ -50,7 +52,7 @@ class DatasetCollector(object):
 
     def run(self):
         """Execution function of running dataset collection"""
-        if not os.path.isfile(self.source_file):
+        if not os.path.isdir(self.source_file):
             LOG.warning("No such file at " + str(self.source_file) + ".")
             return
 
@@ -65,31 +67,54 @@ class DatasetCollector(object):
             index = tgt_dirs[tgt_dir]
 
             src_fp = os.path.join(self.source_file, file_name)
-            tgt_fp = os.path.join(tgt_dir, f"{index:08d}_{src_fp}")
+            tgt_fp = os.path.join(tgt_dir, f"{index:08d}_{file_name}")
             shutil.copyfile(src_fp, tgt_fp)
             tgt_dirs[tgt_dir] += 1
 
-        print(f"{tgt_dirs[self.train_fp]} train samples.")
-        print(f"{tgt_dirs[self.valid_fp]} valid samples.")
-        print(f"{tgt_dirs[self.test_fp]} test samples.")
+        LOG.info(f"{tgt_dirs[self.train_fp]} train samples.")
+        LOG.info(f"{tgt_dirs[self.valid_fp]} valid samples.")
+        LOG.info(f"{tgt_dirs[self.test_fp]} test samples.")
 
 
-class DatasetVocabBuilder(object):
+class DatasetVocabBuilder:
     """Building of dataset vocab"""
 
     def __init__(self, **kwargs):
-        self.dataset_files = kwargs['dataset_files']
+        self.dataset_dirs = kwargs['dataset_dirs']
         self.vocab_file = kwargs['vocab_file']
         self.pad_token = kwargs['pad_token']
         self.unk_token = kwargs['unk_token']
 
+        # creation of parent directory of vocab file.
         vocab_file_dir_name = os.path.dirname(self.vocab_file)
         if not os.path.isdir(vocab_file_dir_name):
             os.makedirs(vocab_file_dir_name)
 
+        self.tokenizer = CharacterTokenizer(pad_token=self.pad_token,
+                                            unk_token=self.unk_token)
+
     def run(self):
-        """Function of execution of vocab"""
-        ...
+        """Function of vocab building execution"""
+        trainer = TokenizerTrainer(model=self.tokenizer)
+        for dataset_dir in self.dataset_dirs:
+            if not os.path.isdir(dataset_dir):
+                LOG.warning(
+                    "No such dataset directory at: " + str(dataset_dir)
+                )
+                continue
+
+            file_names = os.listdir(dataset_dir)
+            full_text = ''
+            for file_name in file_names:
+                file_name_split = file_name.split('_')
+                file_name = file_name_split[1]
+                file_name_split = file_name.split('.')
+                file_name = file_name_split[0]
+                full_text += file_name + ' '
+
+            trainer.fit(text=full_text)
+
+        trainer.save(self.vocab_file)
 
 
 class BilingualDataset(Dataset):

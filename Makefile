@@ -13,3 +13,9 @@ test:
 run:
 	python3 -m recaptcher
 
+collect:
+	python3 -m recaptcher configs/ds_collect.yaml
+
+build-vocab:
+	python3 -m recaptcher configs/ds_vocab.yaml
+
