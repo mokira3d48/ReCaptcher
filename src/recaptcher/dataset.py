@@ -75,7 +75,7 @@ class DatasetCollector(object):
 
 
 class DatasetVocabBuilder(object):
-    """Construstion du vocabulaire de la dataset"""
+    """Building of dataset vocab"""
 
     def __init__(self, **kwargs):
         self.dataset_files = kwargs['dataset_files']
@@ -135,24 +135,6 @@ class BilingualDataset(Dataset):
 
         self.src_iter = self._get_rows_iterator(src_column_name, dataset_fp)
         self.tgt_iter = self._get_rows_iterator(tgt_column_name, dataset_fp)
-
-    @staticmethod
-    def _get_rows_iterator(column_name, file_path):
-        """Fonction de recuperation des lignes d'une colonne selectionnees"""
-        with open(file_path, 'r') as file:
-            csv_reader = csv.DictReader(file)
-            for row in csv_reader:
-                yield row[column_name]
-
-    @staticmethod
-    def _get_rows_count(col_name, file_path):
-        """Method is used to count number of rows (samples) in dataset file"""
-        rows_iter = BilingualDataset._get_rows_iterator(col_name, file_path)
-        counter = 0
-        for _ in rows_iter:
-            counter += 1
-
-        return counter
 
     @staticmethod
     def padding(sequence, pad_id, sos_id, eos_id, max_len):

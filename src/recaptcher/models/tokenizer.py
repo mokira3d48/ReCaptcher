@@ -58,4 +58,4 @@ class CharacterTokenizer(object):
 
     def decode(self, encoded_strings):
         """Method of sequence decoding"""
-
+        ...
