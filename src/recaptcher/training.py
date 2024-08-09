@@ -216,13 +216,15 @@ class Main(object):
         #     src_vocab_size=src_vocab_size,
         #     tgt_vocab_size=tgt_vocab_size,
         # )
-        model = CRNN(in_channels=1, n_chars=tokenizer.vocab_size)
+        encoder = Encoder(in_channels=1)
+        decoder = Decoder(n_chars=tokenizer.vocab_size)
+        model = CRNN(encoder, decoder)
 
         for p in model.parameters():
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-        x = torch.randn(self.batch_size, 1, 224, 224)
+        x = torch.randn(self.batch_size, 1, 112, 112)
         summary(model, input_data=x)
 
         train_dataset = CaptchaDataset(self.train_ds)
@@ -256,3 +258,4 @@ class Main(object):
 
         trainer.compile(model, criterion, optimizer)
         trainer.run(self.n_epochs)
+        torch.save(encoder.load_state_dict(), 'resnet50_encoder.pt')

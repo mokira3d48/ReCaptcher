@@ -76,10 +76,9 @@ class ResNet(nn.Module):
         self.in_channels = 64
         self.conv1 = nn.Conv2d(in_channels=image_channels,
                                out_channels=64,
-                               kernel_size=7, #7
-                               stride=2,  #2
-                               padding=3  #3
-                               )
+                               kernel_size=7,
+                               stride=2,
+                               padding=3)
         self.bn1 = nn.BatchNorm2d(64)
         self.relu = nn.ReLU()
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
@@ -143,12 +142,25 @@ class ResNet(nn.Module):
         return x
 
 
-class CRNN(nn.Module):
+class Encoder(nn.Module):
 
-    def __init__(self, in_channels, n_chars, hidden_size=512):
+    def __init__(self, in_channels):
         super().__init__()
         self.in_channels = in_channels
         self.conv_layers = self.create_resnet([3, 4, 6, 3])
+
+    def create_resnet(self, layers):
+        return ResNet(ResidualBlock, layers, self.in_channels)
+
+    def forward(self, x):
+        x = self.conv_layers(x)
+        return x
+
+
+class Decoder(nn.Module):
+
+    def __init__(self, n_chars, hidden_size=512):
+        super().__init__()
         self.gru = nn.GRU(2048,
                           hidden_size,
                           bidirectional=True,
@@ -163,12 +175,7 @@ class CRNN(nn.Module):
         self.fully_connected.weight.data.normal_(0., 0.02)
         self.fully_connected.bias.data.fill_(0)
 
-    def create_resnet(self, layers):
-        return ResNet(ResidualBlock, layers, self.in_channels)
-
     def forward(self, x):
-        """Method of forward propagation"""
-        x = self.conv_layers(x)  # [None, 2048, 7, 7]
         n_batch, n_channels, height, width = x.size()
 
         x = x.view(n_batch, n_channels, -1).contiguous()  # [B, 2048, 49]
@@ -178,6 +185,20 @@ class CRNN(nn.Module):
         x = self.fully_connected(x)  # [None, 49, 65]
         x = self.log_softmax(x)  # [None, 49, 65]
         return x
+
+
+class CRNN(nn.Module):
+
+    def __init__(self, encoder, decoder):
+        super().__init__()
+        self.encoding = encoder
+        self.decoding = decoder
+
+    def forward(self, x):
+        """Method of forward propagation"""
+        feature_maps = self.encoding(x)
+        outputs = self.decoding(feature_maps)
+        return outputs
 
 
 class CTCLoss(nn.Module):
@@ -242,7 +263,9 @@ def test():
     from torchinfo import summary
 
     loss_fn = CTCLoss()
-    model = CRNN(in_channels=3, n_chars=64)
+    encoder = Encoder(in_channels=3)
+    decoder = Decoder(n_chars=64)
+    model = CRNN(encoder, decoder)
     summary(model, input_size=(16, N_CHANNELS, IMAGE_HEIGHT, IMAGE_WIDTH))
 
     x = torch.randn(4, N_CHANNELS, IMAGE_HEIGHT, IMAGE_WIDTH)
