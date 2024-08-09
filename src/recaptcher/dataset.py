@@ -1,3 +1,4 @@
+import gc
 import os
 import csv
 import logging
@@ -8,7 +9,8 @@ import cv2 as cv
 import torch
 from tqdm import tqdm
 from torch.utils.data import Dataset
-from .models.tokenizer import CharacterTokenizer, Trainer as TokenizerTrainer
+from recaptcher.models.tokenizer import (CharacterTokenizer,
+                                         Trainer as TokenizerTrainer)
 
 
 LOG = logging.getLogger(__name__)
@@ -37,7 +39,7 @@ def get_image_label(file_name):
 def preprocess_label(label, encode_fn):
     """Function which preprocess the label"""
     label_encoded = encode_fn(label)
-    label_encoded = np.asarray(label_encoded[0], dtype=np.int64)
+    label_encoded = np.asarray(label_encoded, dtype=np.int64)
     return label_encoded
 
 
@@ -45,7 +47,8 @@ def label_padding(encoded_label, max_length, pad_token):
     """Function of sequence padding"""
     length = len(encoded_label)
     if length < max_length:
-        padding = np.asarray([pad_token]*(max_length - length), dtype=np.int64)
+        padding = np.asarray([pad_token] * (max_length - length),
+                             dtype=np.int64)
         # LOG.debug(padding.shape)
         # LOG.debug(encoded_label.shape)
         encoded_label = np.hstack([encoded_label, padding])
@@ -169,10 +172,11 @@ class DatasetBuilder:
 
         self.tokenizer = CharacterTokenizer()
         self.tokenizer.load_from_file(self.vocab_file)
+        LOG.debug(str(self.tokenizer.vocab))
 
     def run(self):
         encode_fn = self.tokenizer.encode
-        pad_token = self.tokenizer.pad_token
+        pad_token = self.tokenizer.pad
         for src_dir, tgt_dir in self.mapping.items():
             img_dir = os.path.join(tgt_dir, "img")
             lab_dir = os.path.join(tgt_dir, "lab")
@@ -190,12 +194,15 @@ class DatasetBuilder:
                     image_preprocessed = preprocess_image(image,
                                                           self.image_size)
                 except cv.error as e:
-                    LOG.warning("Error: " + str(e))
+                    LOG.warning(str(e))
                     continue
 
                 label = get_image_label(src_file_name)
                 length = np.asarray(len(label), dtype=np.int64)
                 label_preprocessed = preprocess_label(label, encode_fn)
+                # LOG.debug(label)
+                # LOG.debug(label_preprocessed)
+
                 label_padded = label_padding(label_preprocessed,
                                              max_length=self.max_seq_length,
                                              pad_token=pad_token)
@@ -208,105 +215,69 @@ class DatasetBuilder:
                 np.save(file=len_fp, arr=length)
 
 
-class BilingualDataset(Dataset):
+class CaptchaDataset(Dataset):
 
-    def __init__(
-            self,
-            dataset_fp,
-            src_column_name,
-            tgt_column_name,
-            src_tokenizer,
-            tgt_tokenizer,
-            src_seq_max_len=100,
-            tgt_seq_max_len=100,
-    ):
+    def __init__(self, dataset_fp):
         super().__init__()
         self.dataset_fp = dataset_fp
-        self.src_column_name = src_column_name
-        self.tgt_column_name = tgt_column_name
-        self.src_tokenizer = src_tokenizer
-        self.tgt_tokenizer = tgt_tokenizer
 
-        self.src_seq_max_len = src_seq_max_len
-        self.tgt_seq_max_len = tgt_seq_max_len
+        self.img_dir = os.path.join(dataset_fp, "img")
+        self.lab_dir = os.path.join(dataset_fp, "lab")
+        self.len_dir = os.path.join(dataset_fp, "len")
 
-        self.sent_count = self._get_rows_count(src_column_name, dataset_fp)
+        self.img_file_names = os.listdir(self.img_dir)
+        self.lab_file_names = os.listdir(self.lab_dir)
+        self.len_file_names = os.listdir(self.len_dir)
 
-        self.src_pad = self.src_tokenizer.encode('<pad>').ids[0]
-        self.src_sos = self.src_tokenizer.encode('<sos>').ids[0]
-        self.src_eos = self.src_tokenizer.encode('<eos>').ids[0]
-
-        self.tgt_pad = self.tgt_tokenizer.encode('<pad>').ids[0]
-        self.tgt_sos = self.tgt_tokenizer.encode('<sos>').ids[0]
-        self.tgt_eos = self.tgt_tokenizer.encode('<eos>').ids[0]
-
-        self.src_special_tokens = [self.src_pad,
-                                   self.src_sos,
-                                   self.src_eos,
-                                   self.src_seq_max_len]
-        self.tgt_special_tokens = [self.tgt_pad,
-                                   self.tgt_sos,
-                                   self.tgt_eos,
-                                   self.tgt_seq_max_len]
-
-        self.src_iter = self._get_rows_iterator(src_column_name, dataset_fp)
-        self.tgt_iter = self._get_rows_iterator(tgt_column_name, dataset_fp)
-
-    @staticmethod
-    def padding(sequence, pad_id, sos_id, eos_id, max_len):
-        sequence = list(sequence)
-        sequence.insert(0, sos_id)
-        sequence.append(eos_id)
-
-        seq_len = len(sequence)
-        if seq_len < max_len:
-            padded_seq = sequence + ([pad_id] * (max_len - seq_len))
-            return padded_seq
-
-        return sequence[:max_len]
-
-    def get_next(self):
-        try:
-            next_src_sentence = next(self.src_iter)
-            next_tgt_sentence = next(self.tgt_iter)
-            return next_src_sentence, next_tgt_sentence
-        except StopIteration:
-            self.src_iter = self._get_rows_iterator(self.src_column_name,
-                                                    self.dataset_fp)
-            self.tgt_iter = self._get_rows_iterator(self.tgt_column_name,
-                                                    self.dataset_fp)
-            return self.get_next()
+        assert len(self.img_file_names) == len(self.lab_file_names) \
+               and len(self.lab_file_names) == len(self.len_file_names), (
+            "The number of image is not equal to number of label or length."
+        )
 
     def __len__(self):
-        return self.sent_count
+        return len(self.img_file_names)
+
+    def remove_sample(self, index):
+        del self.img_file_names[index]
+        del self.lab_file_names[index]
+        del self.len_file_names[index]
+        gc.collect()
 
     def __getitem__(self, index):
         if index < 0 or index >= len(self):
             raise IndexError("Index out of range: " + str(index))
 
-        src_sentence, tgt_sentence = self.get_next()
+        file_name = self.img_file_names[index]
+        img_file_path = os.path.join(self.img_dir, file_name)
+        if not os.path.isfile(img_file_path):
+            self.remove_sample(index)
+            return self.__getitem__(index)
 
-        src_encoded = self.src_tokenizer.encode(src_sentence)
-        tgt_encoded = self.tgt_tokenizer.encode(tgt_sentence)
-        src_token_ids = self.padding(src_encoded.ids, *self.src_special_tokens)
-        tgt_token_ids = self.padding(tgt_encoded.ids, *self.tgt_special_tokens)
+        lab_file_path = os.path.join(self.lab_dir, file_name)
+        len_file_path = os.path.join(self.len_dir, file_name)
+        if not os.path.isfile(lab_file_path) \
+                and not os.path.isfile(len_file_path):
+            self.remove_sample(index)
+            return self.__getitem__(index)
 
-        src_token_ids = torch.tensor(src_token_ids, dtype=torch.long)
-        tgt_token_ids = torch.tensor(tgt_token_ids, dtype=torch.long)
-        return src_token_ids, tgt_token_ids
+        image = np.load(img_file_path)
+        label = np.load(lab_file_path)
+        length = np.load(len_file_path)
+
+        image = torch.tensor(image)
+        label = torch.tensor(label, dtype=torch.long)
+        length = torch.tensor(length, dtype=torch.long)
+
+        return image, label, length
 
 
 def main():
     from torch.utils.data import DataLoader
 
-    ds = BilingualDataset('outputs/datasets/train.csv',
-                          'french',
-                          'english',
-                          'outputs/vocab/french_vocab.json',
-                          'outputs/vocab/english_vocab.json')
-    loader = DataLoader(ds, batch_size=2, num_workers=0)
-    for x, y, in loader:
-        print(x, y)
+    ds = CaptchaDataset('outputs/dataset_norm/train')
+    loader = DataLoader(ds, batch_size=2, num_workers=4)
+    for x, y, l in loader:
+        print(x.shape, y, l)
         input()
 
 

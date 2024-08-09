@@ -46,52 +46,37 @@ class CharacterTokenizer(object):
         self.pad_token = int('[pad]' in self.vocab)
         self.unk_token = int('[unk]' in self.vocab)
 
-    def encode(self, strings):
+    def encode(self, string):
         """Function of string encoding"""
-        if not hasattr(strings, '__iter__'):
-            strings = [strings]
+        encoded_string = []
+        for character in string:
+            if character in self.vocab:
+                index = self.vocab.index(character)
+                encoded_string.append(index)
+            else:
+                msg = "Character " + str(character) + " is unknown."
+                LOG.warning(msg)
+                if not self.unk_token:
+                    raise IndexError(msg)
 
-        output_sequences = []
-        for string in strings:
-            encoded_string = []
-            for character in string:
-                if character in self.vocab:
-                    index = self.vocab.index(character)
-                    encoded_string.append(index)
-                else:
-                    msg = "Character " + str(character) + " is unknown."
-                    LOG.warning(msg)
-                    if not self.unk_token:
-                        raise IndexError(msg)
+                encoded_string.append(self.vocab.index('[unk]'))
 
-                    encoded_string.append(self.vocab.index('[unk]'))
+        return encoded_string
 
-            output_sequences.append(encoded_string)
-
-        return output_sequences
-
-    def decode(self, encoded_strings):
+    def decode(self, encoded_string):
         """Method of sequence decoding"""
-        if not hasattr(encoded_strings, '__iter__'):
-            encoded_strings = [encoded_strings]
+        decoded_string = ''
+        for code in encoded_string:
+            if code < 0 or code > final_index:
+                raise ValueError("The code " + str(code) + " is invalid.")
 
-        output_strings = []
-        final_index = self.vocab_size - 1
-        for encoded_string in encoded_strings:
-            decoded_string = ''
-            for code in encoded_string:
-                if code < 0 or code > final_index:
-                    raise ValueError("The code " + str(code) + " is invalid.")
+            character = self.vocab[code]
+            if character == '[pad]':
+                continue
 
-                character = self.vocab[code]
-                if character == '[pad]':
-                    continue
+            decoded_string += character
 
-                decoded_string += character
-
-            output_strings.append(decoded_string)
-
-        return output_strings
+        return decoded_string
 
 
 class Trainer(object):

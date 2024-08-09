@@ -1,34 +1,26 @@
 action: Training
-name: transformer
+name: resnet_lstm
 n_epochs: 200
 report_dir: outputs/runs/
-savedModel: outputs/transformer.pt
+savedModel: outputs/resnet_lstm.pt
 savingStep: 5
-
-LabelSmoothing:
-  epsilon: 0.1
 
 optim:
   learning_rate: 0.001
   beta: [0.9, 0.98]
   eps: 0.000000001
-  warmup: 4000
-  max_iters: 20000
 
 checkpoint:
   folder: outputs/transformer_ckp/
   last_ckp_count: 3
 
 dataset:
-  train: outputs/datasets/train.csv
-  valid: outputs/datasets/valid.csv
-  test: outputs/datasets/test.csv
-  src_column_name: french
-  tgt_column_name: english
-  batch_size: 32
-  n_workers: 0
+  train: outputs/dataset_norm/train
+  valid: outputs/dataset_norm/valid
+  test: outputs/dataset_norm/test
+  batch_size: 64
+  n_workers: 4
 
 model:
-  configFile: configs/transformer.yaml
-  src_vocab: outputs/vocab/french_vocab.json
-  tgt_vocab: outputs/vocab/english_vocab.json
+  configFile: configs/resnet_lstm.yaml
+  vocab_file: outputs/datasets/vocab.json
