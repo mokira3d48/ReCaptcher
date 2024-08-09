@@ -19,7 +19,7 @@ from analytics.metrics import Mean, CER, Value
 # from .models.transformer import Transformer, CosineWarmupScheduler
 from recaptcher.dataset import CaptchaDataset
 from recaptcher.models.tokenizer import CharacterTokenizer
-from recaptcher.models.resnet_gru import CRNN, CTCLoss
+from recaptcher.models.resnet_gru import Encoder, Decoder, CRNN, CTCLoss
 
 
 LOG = logging.getLogger(__name__)
@@ -27,12 +27,15 @@ LOG = logging.getLogger(__name__)
 
 class CTCCER(CER):
     """Calcul du CER pour un algorithm CTC"""
+    
+    BLANK_INDEX = 0
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        LOG.info("CTC CER blank index: " + str(self.__class__.BLANK_INDEX))
 
     @classmethod
-    def reconstruct(cls, labels, blank=0):
+    def reconstruct(cls, labels):
         new_labels = []
         # merge same labels
         previous = None
@@ -42,16 +45,16 @@ class CTCCER(CER):
                 previous = l
 
         # delete blank
-        new_labels = [l for l in new_labels if l != blank]
+        new_labels = [l for l in new_labels if l != cls.BLANK_INDEX]
         return new_labels
 
     @classmethod
-    def ctc_greedy_decode(cls, log_prob, blank=0, **kwargs):
+    def ctc_greedy_decode(cls, log_prob, **kwargs):
         intseqs = []
         labels = np.argmax(log_prob, axis=-1)
         # print(labels.size())
         for label in labels:
-            intseq = cls.reconstruct(label, blank=blank)
+            intseq = cls.reconstruct(label)
             intseqs.append(intseq)
 
         return intseqs
@@ -59,7 +62,8 @@ class CTCCER(CER):
     def compute(self, logits):
         inference = self.__class__
         log_probs = F.log_softmax(logits, dim=-1)
-        intseqs = inference.ctc_greedy_decode(log_probs.detach().numpy())
+        log_probs = log_probs.detach().numpy()
+        intseqs = inference.ctc_greedy_decode(log_probs)
         # intseqs = torch.tensor(intseqs, dtype=torch.long)
         intseqs = [torch.tensor(seq, dtype=torch.long)
                    for seq in intseqs]
@@ -229,7 +233,8 @@ class Main(object):
 
         train_dataset = CaptchaDataset(self.train_ds)
         valid_dataset = CaptchaDataset(self.valid_ds)
-
+        
+        CTCCER.BLANK_INDEX = tokenizer.pad
         criterion = CTCLoss(blank_index=tokenizer.pad)
         # criterion = LabelSmoothingLoss(epsilon=self.label_smoothing_eps)
         optimizer = optim.Adam(model.parameters(),
@@ -259,3 +264,4 @@ class Main(object):
         trainer.compile(model, criterion, optimizer)
         trainer.run(self.n_epochs)
         torch.save(encoder.load_state_dict(), 'resnet50_encoder.pt')
+
