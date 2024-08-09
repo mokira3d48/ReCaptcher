@@ -21,3 +21,6 @@ build-vocab:
 
 build-dataset:
 	python3 -m recaptcher configs/ds_build.yaml
+
+train:
+	python3 -m recaptcher configs/training.yaml

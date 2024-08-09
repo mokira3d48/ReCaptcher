@@ -1,6 +1,8 @@
 """Transformer model of language training"""
 import os
 import logging
+
+import numpy as np
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -15,50 +17,67 @@ from analytics.trainers.training_report import TrainRepport
 from analytics.metrics import Mean, CER, Value
 
 # from .models.transformer import Transformer, CosineWarmupScheduler
-# from .dataset import BilingualDataset
+from recaptcher.dataset import CaptchaDataset
+from recaptcher.models.tokenizer import CharacterTokenizer
+from recaptcher.models.resnet_gru import CRNN, CTCLoss
+
 
 LOG = logging.getLogger(__name__)
 
 
-class LabelSmoothingLoss(nn.Module):
+class CTCCER(CER):
+    """Calcul du CER pour un algorithm CTC"""
 
-    def __init__(self, epsilon=0.1, reduction="mean", weight=None):
-        super().__init__()
-        assert 0 <= epsilon < 1
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
 
-        self.epsilon = epsilon
-        self.reduction = reduction
-        self.weight = weight
+    @classmethod
+    def reconstruct(cls, labels, blank=0):
+        new_labels = []
+        # merge same labels
+        previous = None
+        for l in labels:
+            if l != previous:
+                new_labels.append(l)
+                previous = l
 
-    def reduce_loss(self, loss):
-        return loss.mean() if self.reduction == 'mean' else loss.sum() \
-            if self.reduction == 'sum' else loss
+        # delete blank
+        new_labels = [l for l in new_labels if l != blank]
+        return new_labels
 
-    def linear_combination(self, i, j):
-        return (1 - self.epsilon) * i + self.epsilon * j
+    @classmethod
+    def ctc_greedy_decode(cls, log_prob, blank=0, **kwargs):
+        intseqs = []
+        labels = np.argmax(log_prob, axis=-1)
+        # print(labels.size())
+        for label in labels:
+            intseq = cls.reconstruct(label, blank=blank)
+            intseqs.append(intseq)
 
-    def forward(self, predict, target):
-        """Compute loss label smoothed"""
-        if self.weight is not None:
-            self.weight = self.weight.to(predict)
+        return intseqs
 
-        num_classes = predict.size(-1)
-        # log_probs = torch.log_softmax(predict, dim=-1)
-        log_probs = predict
-        loss = self.reduce_loss(-log_probs.sum(dim=-1))
+    def compute(self, logits):
+        inference = self.__class__
+        log_probs = F.log_softmax(logits, dim=-1)
+        intseqs = inference.ctc_greedy_decode(log_probs.detach().numpy())
+        # intseqs = torch.tensor(intseqs, dtype=torch.long)
+        intseqs = [torch.tensor(seq, dtype=torch.long)
+                   for seq in intseqs]
+        return intseqs
 
-        negative_log_likelihood_loss = F.nll_loss(
-            input=log_probs,
-            target=target,
-            reduction=self.reduction,
-            weight=self.weight,
-        )
-        returned = self.linear_combination(negative_log_likelihood_loss,
-                                           (loss / num_classes))
-        return returned
+    def update_state(self, y_pred, y_true, lengths):
+        y_pred = self.compute(y_pred)
+        targets = []
+        for target, length in zip(y_true, lengths):
+            targets.append(target[:length])
+
+        # print(y_pred)
+        # print()
+        # print(targets)
+        super().update_state(y_pred, targets)
 
 
-class TransformerTrainer(Trainer):
+class CRNNTrainer(Trainer):
     """Implementation of autoencoder training process"""
 
     def __init__(self, *args, **kwargs):
@@ -67,84 +86,72 @@ class TransformerTrainer(Trainer):
             self._log_format = (
                 "{epoch:5d} / {n_epochs:5d}"
                 " \t \033[92m{message:12s}\033[0m"
-                " \t \033[93m{losses_Mean:12.6f}\033[0m"
-                " \t \033[95m{metrics_CER:8.6f}\033[0m"
-                " \t \033[96m{lr_Value:8.6f}\033[0m"
+                " \t \033[93m{losses_Mean:12.4f}\033[0m"
+                " \t \033[95m{metrics_CTCCER:7.4f}\033[0m"
             )
 
         self.metric_classes = {
             'losses': [Mean],
-            'metrics': [CER],
-            'lr': [Value],
+            'metrics': [CTCCER],
         }
 
         self.criterion = None
         self.optimizer = None
-        self.scheduler = None
         self.model = None
 
-    def compile(self, model, criterion, optimizer, scheduler):
+    def compile(self, model, criterion, optimizer):
         self.criterion = criterion
         self.optimizer = optimizer
-        self.scheduler = scheduler
         self.model = model.to(self.device)
         if self.checkpoint:
             self.checkpoint.put('optimizer', self.optimizer)
-            self.checkpoint.put('scheduler', self.scheduler)
             self.checkpoint.put('model', self.model)
 
-    def _estimate(self, batch_x, batch_y):
+    def _estimate(self, batch_x, batch_y, lengths):
         batch_x = batch_x.to(self.device)  # B x 3 x H x W
         batch_y = batch_y.to(self.device)  # B x T
+        lengths = lengths.to(self.device)  # B x 1
 
-        input_y = batch_y[:, :-1]  # 1 x (y_length - 1)
-        target = batch_y[:, 1:]  # 1 x (y_length - 1)
-        # latent = self.model.encode(batch_x)
-        # probs = self.model.decode(latent, input_y)
-        probs = self.model(batch_x, input_y)
-        # print(torch.argmax(torch.log_softmax(probs, dim=-1), dim=-1))
+        # etape de prediction:
+        outputs = self.model(batch_x)  #: B x (y_length - 1) x VOCAB_SIZE
 
-        predicts = probs.contiguous().view(-1, self.model.tgt_vocab_size)
-        targets = target.contiguous().view(-1)
-        loss = self.criterion(predicts, targets)
+        loss = self.criterion(outputs, batch_y, lengths)
         self.compute_metric('losses', loss.item())
 
-        output = torch.argmax(probs, dim=-1)
-        output = output.to(torch.long)
-        self.compute_metric('metrics', output, target)
-
+        # outputs = torch.argmax(outputs, dim=-1)
+        # outputs = outputs.to(torch.long)
+        self.compute_metric('metrics', outputs, batch_y, lengths)
         return loss
 
     def on_start_train(self):
         """We turn model in training mode"""
         self.model.train()
 
-    def train_step(self, batch_x, batch_y):
+    def train_step(self, batch_x, batch_y, lengths):
         """Training method on one batch"""
-        loss = self._estimate(batch_x, batch_y)
+        loss = self._estimate(batch_x, batch_y, lengths)
         self.optimizer.zero_grad()
         loss.backward()
         self.optimizer.step()
-        self.scheduler.step()
-
-        lr = self.scheduler.get_lr()
-        self.compute_metric('lr', lr[0])
 
     def on_start_eval(self):
-        """We turn model in training mode"""
+        """We turn model in eval mode"""
         self.model.eval()
 
-    def eval_step(self, batch_x, batch_y):
+    def eval_step(self, batch_x, batch_y, lengths):
         """Validation method on one batch"""
-        self._estimate(batch_x, batch_y)
+        self._estimate(batch_x, batch_y, lengths)
 
     def run(self, *args, **kwargs):
         print(f"{'Epochs':>13s}"
               f" \t \033[92m{'Message':12s}\033[0m"
-              f" \t \033[93m{'Loss':>12s}\033[0m"
-              f" \t \033[95m{'CER':>8s}\033[0m"
-              f" \t \033[96m{'LR':>8s}\033[0m"
-              )
+              f" \t \033[93m{'CTCLoss':>12s}\033[0m"
+              f" \t \033[95m{'CER':>7s}\033[0m"
+              # f" \t {'SSIM':>12s}"
+              # f" \t {'NCC':>12s}"
+              # f" \t {'Vl Loss':>14s}"
+              # f" \t {'Vl PSNR':>12s}"
+        )
         return super().run(*args, **kwargs)
 
 
@@ -177,98 +184,68 @@ class Main(object):
         self.saved_model = kwargs['savedModel']
         self.saving_step = kwargs['savingStep']
 
-        self.label_smoothing_eps = kwargs['LabelSmoothing']['epsilon']
+        # self.label_smoothing_eps = kwargs['LabelSmoothing']['epsilon']
 
         self.learning_rate = kwargs['optim']['learning_rate']
         self.betas = kwargs['optim']['beta']
         self.eps = kwargs['optim']['eps']
-        self.warmup = kwargs['optim']['warmup']
-        self.lrs_max_iters = kwargs['optim']['max_iters']
+        # self.warmup = kwargs['optim']['warmup']
+        # self.lrs_max_iters = kwargs['optim']['max_iters']
 
         self.train_ds = kwargs['dataset']['train']
         self.valid_ds = kwargs['dataset']['valid']
         self.test_ds = kwargs['dataset']['test']
-        self.src_column_name = kwargs['dataset']['src_column_name']
-        self.tgt_column_name = kwargs['dataset']['tgt_column_name']
+        # self.src_column_name = kwargs['dataset']['src_column_name']
+        # self.tgt_column_name = kwargs['dataset']['tgt_column_name']
         self.batch_size = kwargs['dataset']['batch_size']
         self.n_workers = kwargs['dataset']['n_workers']
 
         self.model_config_fp = kwargs['model']['configFile']
-        self.src_vocab = kwargs['model']['src_vocab']
-        self.tgt_vocab = kwargs['model']['tgt_vocab']
+        self.vocab_file = kwargs['model']['vocab_file']
 
         self.folder = kwargs['checkpoint']['folder']
         self.last_ckp_count = kwargs['checkpoint']['last_ckp_count']
 
     def run(self):
         """Method to run training loop"""
-        src_tokenizer = Tokenizer.from_file(self.src_vocab)
-        tgt_tokenizer = Tokenizer.from_file(self.tgt_vocab)
-        src_vocab_size = len(src_tokenizer.get_vocab())
-        tgt_vocab_size = len(tgt_tokenizer.get_vocab())
+        tokenizer = CharacterTokenizer()
+        tokenizer.load_from_file(self.vocab_file)
 
-        model = Transformer.from_config_file(
-            config_fp=self.model_config_fp,
-            src_vocab_size=src_vocab_size,
-            tgt_vocab_size=tgt_vocab_size,
-        )
+        # model = Transformer.from_config_file(
+        #     config_fp=self.model_config_fp,
+        #     src_vocab_size=src_vocab_size,
+        #     tgt_vocab_size=tgt_vocab_size,
+        # )
+        model = CRNN(in_channels=1, n_chars=tokenizer.vocab_size)
+
         for p in model.parameters():
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
 
-        x = torch.randint(
-            low=0,
-            high=(src_vocab_size - 1),
-            size=(self.batch_size, model.src_seq_max_len),
-        )
-        y_shift = torch.randint(
-            low=0,
-            high=(tgt_vocab_size - 1),
-            size=(self.batch_size, model.tgt_seq_max_len)
-        )
-        summary(model, input_data=[x, y_shift])
+        x = torch.randn(self.batch_size, 1, 224, 224)
+        summary(model, input_data=x)
 
-        train_dataset = BilingualDataset(
-            self.train_ds,
-            self.src_column_name,
-            self.tgt_column_name,
-            src_tokenizer,
-            tgt_tokenizer,
-            src_seq_max_len=model.src_seq_max_len,
-            tgt_seq_max_len=model.tgt_seq_max_len
-        )
-        valid_dataset = BilingualDataset(
-            self.valid_ds,
-            self.src_column_name,
-            self.tgt_column_name,
-            src_tokenizer,
-            tgt_tokenizer,
-            src_seq_max_len=model.src_seq_max_len,
-            tgt_seq_max_len=model.tgt_seq_max_len
-        )
+        train_dataset = CaptchaDataset(self.train_ds)
+        valid_dataset = CaptchaDataset(self.valid_ds)
 
-        print("Source lang:", train_dataset.src_column_name)
-        print("Target lang:", train_dataset.tgt_column_name)
-        print()
-
-        criterion = nn.CrossEntropyLoss(ignore_index=train_dataset.tgt_pad)
+        criterion = CTCLoss(blank_index=tokenizer.pad)
         # criterion = LabelSmoothingLoss(epsilon=self.label_smoothing_eps)
         optimizer = optim.Adam(model.parameters(),
                                lr=self.learning_rate,
                                betas=self.betas,
                                eps=self.eps)
-        lr_scheduler = CosineWarmupScheduler(optimizer=optimizer,
-                                             warmup=self.warmup,
-                                             max_iters=self.lrs_max_iters)
+        # lr_scheduler = CosineWarmupScheduler(optimizer=optimizer,
+        #                                      warmup=self.warmup,
+        #                                      max_iters=self.lrs_max_iters)
 
         checkpoint = CheckpointManager(self.name,
                                        self.folder,
                                        last_ckp_max_count=self.last_ckp_count)
-        trainer = TransformerTrainer(train_dataset=train_dataset,
-                                     valid_dataset=valid_dataset,
-                                     checkpoint=checkpoint,
-                                     batch_size=self.batch_size,
-                                     n_workers=self.n_workers)
+        trainer = CRNNTrainer(train_dataset=train_dataset,
+                              valid_dataset=valid_dataset,
+                              checkpoint=checkpoint,
+                              batch_size=self.batch_size,
+                              n_workers=self.n_workers)
 
         report = TrainRepport(trainer, outputs_dir=self.report_dir)
         saving = SavedModelCallback(self.saved_model,
@@ -277,6 +254,5 @@ class Main(object):
         trainer.callbacks.append(report)
         trainer.callbacks.append(saving)
 
-        trainer.compile(model, criterion, optimizer, lr_scheduler)
-        # trainer.compile(model, criterion, optimizer)
+        trainer.compile(model, criterion, optimizer)
         trainer.run(self.n_epochs)

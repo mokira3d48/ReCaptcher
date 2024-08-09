@@ -3,5 +3,5 @@ ds_mapping: {'outputs/datasets/train/': 'outputs/dataset_norm/train/',
              'outputs/datasets/valid/': 'outputs/dataset_norm/valid/',
              'outputs/datasets/test/': 'outputs/dataset_norm/test/',}
 vocab_file: outputs/datasets/vocab.json
-image_size: [224, 224]
+image_size: [112, 112]
 max_seq_length: 12

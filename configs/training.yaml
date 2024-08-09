@@ -1,5 +1,5 @@
 action: Training
-name: resnet_lstm
+name: resnet_gru
 n_epochs: 200
 report_dir: outputs/runs/
 savedModel: outputs/resnet_lstm.pt
@@ -11,16 +11,16 @@ optim:
   eps: 0.000000001
 
 checkpoint:
-  folder: outputs/transformer_ckp/
+  folder: outputs/resnet_gru_ckp/
   last_ckp_count: 3
 
 dataset:
   train: outputs/dataset_norm/train
   valid: outputs/dataset_norm/valid
   test: outputs/dataset_norm/test
-  batch_size: 64
+  batch_size: 16
   n_workers: 4
 
 model:
-  configFile: configs/resnet_lstm.yaml
+  configFile: configs/resnet_gru.yaml
   vocab_file: outputs/datasets/vocab.json
