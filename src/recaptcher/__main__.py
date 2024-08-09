@@ -2,7 +2,7 @@ import os
 import logging
 import logging.config
 
-from .dataset import DatasetCollector, DatasetVocabBuilder
+from .dataset import DatasetCollector, DatasetVocabBuilder, DatasetBuilder
 from .training import Main as Training
 from .predictions import Prediction
 from .utils import load_args
@@ -15,6 +15,7 @@ LOG = logging.getLogger('alt')
 actions = {
     'DatasetCollector': DatasetCollector,
     'DatasetVocabBuilder': DatasetVocabBuilder,
+    'DatasetBuilder': DatasetBuilder,
     'Training': Training,
     'Prediction': Prediction,
 }

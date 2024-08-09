@@ -17,32 +17,34 @@ class CharacterTokenizer(object):
     @property
     def vocab_size(self):
         """int: the vocab size"""
-        adding = 0
-        if self.unk_token:
-            adding += 1
+        return len(self.vocab)
 
-        if self.pad_token:
-            adding += 1
+    @property
+    def pad(self):
+        """int: Padding ID"""
+        if '[pad]' in self.vocab:
+            return self.vocab.index('[pad]')
 
-        return len(self.vocab) + adding
+    @property
+    def unk(self):
+        """int: Padding ID"""
+        if '[unk]' in self.vocab:
+            return self.vocab.index('[unk]')
 
     def load_from_file(self, file_path):
         """Method to load characters vocab from json file"""
-        if not os.path.isfile(vocab_file_path):
+        if not os.path.isfile(file_path):
             raise FileNotFoundError(
-                f"No such vocab file at {vocab_file_path}"
+                f"No such vocab file at {file_path}"
             )
 
         json_model = {}
-        with open(vocab_file_path) as file:
-            json_model = json.load(vocab_file_path)
+        with open(file_path, mode='r', encoding='UTF-8') as file:
+            json_model = json.load(file)
 
         self.vocab = json_model.get('vocab', [])
-        if '<pad>' in self.vocab:
-            self.pad_token = self.vocab.index('<pad>')
-
-        if '<unk>' in self.vocab:
-            self.unk_token = self.vocab.index('<unk>')
+        self.pad_token = int('[pad]' in self.vocab)
+        self.unk_token = int('[unk]' in self.vocab)
 
     def encode(self, strings):
         """Function of string encoding"""
@@ -53,8 +55,8 @@ class CharacterTokenizer(object):
         for string in strings:
             encoded_string = []
             for character in string:
-                if character in self.main_chars:
-                    index = self.main_chars.index(character)
+                if character in self.vocab:
+                    index = self.vocab.index(character)
                     encoded_string.append(index)
                 else:
                     msg = "Character " + str(character) + " is unknown."
@@ -62,7 +64,7 @@ class CharacterTokenizer(object):
                     if not self.unk_token:
                         raise IndexError(msg)
 
-                    encoded_string.append(self.unk_token)
+                    encoded_string.append(self.vocab.index('[unk]'))
 
             output_sequences.append(encoded_string)
 
@@ -82,7 +84,7 @@ class CharacterTokenizer(object):
                     raise ValueError("The code " + str(code) + " is invalid.")
 
                 character = self.vocab[code]
-                if character == '<pad>':
+                if character == '[pad]':
                     continue
 
                 decoded_string += character
@@ -134,4 +136,3 @@ class Trainer(object):
         with open(model_file_path, mode='w', encoding='UTF-8') as file:
             stringify = json.dumps({'vocab': self.model.vocab})
             file.write(stringify)
-

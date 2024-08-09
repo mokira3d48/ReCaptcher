@@ -19,3 +19,5 @@ collect:
 build-vocab:
 	python3 -m recaptcher configs/ds_vocab.yaml
 
+build-dataset:
+	python3 -m recaptcher configs/ds_build.yaml

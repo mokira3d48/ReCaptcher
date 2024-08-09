@@ -4,13 +4,57 @@ import logging
 import shutil
 
 import numpy as np
+import cv2 as cv
 import torch
-# from tqdm import tqdm
+from tqdm import tqdm
 from torch.utils.data import Dataset
 from .models.tokenizer import CharacterTokenizer, Trainer as TokenizerTrainer
 
 
 LOG = logging.getLogger(__name__)
+
+
+def preprocess_image(image, image_size=(224, 224)):
+    """Function that is used to preprocess image"""
+    image = cv.resize(image, dsize=image_size)
+    image = cv.cvtColor(image, cv.COLOR_BGR2GRAY)
+    image = np.asarray(image, dtype=np.float32)
+    image = np.divide(image, 255.0)
+    image = np.reshape(image, (image.shape[0], image.shape[1], 1))
+    image = np.transpose(image, (2, 1, 0))
+    return image
+
+
+def get_image_label(file_name):
+    """Function which returns the image label by its file name"""
+    file_name_split = file_name.split('_')
+    file_name = file_name_split[1]
+    file_name_split = file_name.split('.')
+    file_name = file_name_split[0]
+    return file_name
+
+
+def preprocess_label(label, encode_fn):
+    """Function which preprocess the label"""
+    label_encoded = encode_fn(label)
+    label_encoded = np.asarray(label_encoded[0], dtype=np.int64)
+    return label_encoded
+
+
+def label_padding(encoded_label, max_length, pad_token):
+    """Function of sequence padding"""
+    length = len(encoded_label)
+    if length < max_length:
+        padding = np.asarray([pad_token]*(max_length - length), dtype=np.int64)
+        # LOG.debug(padding.shape)
+        # LOG.debug(encoded_label.shape)
+        encoded_label = np.hstack([encoded_label, padding])
+        return encoded_label
+
+    if length > max_length:
+        LOG.warning("Alert: An length is greater than the max length.")
+
+    return encoded_label[:max_length]
 
 
 class DatasetCollector:
@@ -106,15 +150,62 @@ class DatasetVocabBuilder:
             file_names = os.listdir(dataset_dir)
             full_text = ''
             for file_name in file_names:
-                file_name_split = file_name.split('_')
-                file_name = file_name_split[1]
-                file_name_split = file_name.split('.')
-                file_name = file_name_split[0]
-                full_text += file_name + ' '
+                label = get_image_label(file_name)
+                full_text += label + ' '
 
             trainer.fit(text=full_text)
 
         trainer.save(self.vocab_file)
+
+
+class DatasetBuilder:
+    """Program to build the normalized dataset into NumPY file"""
+
+    def __init__(self, **kwargs):
+        self.mapping = kwargs['ds_mapping']
+        self.vocab_file = kwargs['vocab_file']
+        self.image_size = kwargs['image_size']
+        self.max_seq_length = kwargs['max_seq_length']
+
+        self.tokenizer = CharacterTokenizer()
+        self.tokenizer.load_from_file(self.vocab_file)
+
+    def run(self):
+        encode_fn = self.tokenizer.encode
+        pad_token = self.tokenizer.pad_token
+        for src_dir, tgt_dir in self.mapping.items():
+            img_dir = os.path.join(tgt_dir, "img")
+            lab_dir = os.path.join(tgt_dir, "lab")
+            len_dir = os.path.join(tgt_dir, "len")
+            dirs = [img_dir, lab_dir, len_dir]
+            for dir_path in dirs:
+                if not os.path.isdir(dir_path):
+                    os.makedirs(dir_path)
+
+            file_names = os.listdir(src_dir)
+            for src_file_name in tqdm(file_names):
+                src_file_path = os.path.join(src_dir, src_file_name)
+                try:
+                    image = cv.imread(src_file_path)
+                    image_preprocessed = preprocess_image(image,
+                                                          self.image_size)
+                except cv.error as e:
+                    LOG.warning("Error: " + str(e))
+                    continue
+
+                label = get_image_label(src_file_name)
+                length = np.asarray(len(label), dtype=np.int64)
+                label_preprocessed = preprocess_label(label, encode_fn)
+                label_padded = label_padding(label_preprocessed,
+                                             max_length=self.max_seq_length,
+                                             pad_token=pad_token)
+
+                img_fp = os.path.join(img_dir, f"{src_file_name}.npy")
+                lab_fp = os.path.join(lab_dir, f"{src_file_name}.npy")
+                len_fp = os.path.join(len_dir, f"{src_file_name}.npy")
+                np.save(file=img_fp, arr=image_preprocessed)
+                np.save(file=lab_fp, arr=label_padded)
+                np.save(file=len_fp, arr=length)
 
 
 class BilingualDataset(Dataset):
