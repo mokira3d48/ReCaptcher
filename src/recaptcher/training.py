@@ -32,7 +32,7 @@ class CTCCER(CER):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
-        LOG.info("CTC CER blank index: " + str(self.__class__.BLANK_INDEX))
+        # LOG.info("CTC CER blank index: " + str(self.__class__.BLANK_INDEX))
 
     @classmethod
     def reconstruct(cls, labels):
