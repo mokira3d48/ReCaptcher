@@ -24,3 +24,6 @@ build-dataset:
 
 train:
 	python3 -m recaptcher configs/training.yaml
+
+predict:
+	python3 -m recaptcher configs/predictions.yaml

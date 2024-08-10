@@ -1,0 +1,2 @@
+in_channels: 1
+resnet_version: 50

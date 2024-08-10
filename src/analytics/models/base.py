@@ -1,3 +1,4 @@
+import yaml
 import torch
 from torch import nn
 from torchinfo import summary
@@ -36,6 +37,20 @@ class Model(nn.Module):
         super().__init__()
         self.inputs = [inputs] if not hasattr(inputs, '__iter__') \
             else inputs
+
+    @classmethod
+    def load_config(cls, **kwargs):
+        raise NotImplemented("You should implement this method.")
+
+    @classmethod
+    def from_config_file(cls, file_path):
+        """Method of model config loading from yaml file"""
+        args = {}
+        with open(file=file_path, mode='r') as file:
+            args = yaml.load(file, Loader=yaml.FullLoader)
+
+        instance = cls.load_config(**args)
+        return instance
 
     def summary(self, batch_size=1):
         """Method of model summarization"""

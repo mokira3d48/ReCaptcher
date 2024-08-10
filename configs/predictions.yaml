@@ -1,11 +1,12 @@
 action: Prediction
-max_len: null
+image_size: [112, 112]
+
+encoder:
+  configFile: configs/resnet_encoder.yaml
 
 model:
-  configFile: configs/transformer.yaml
-  saved: outputs/transformer.pt
+  saved: outputs/resnet_lstm.pt
   checkpoint: null
 
 vocab:
-  source: outputs/vocab/french_vocab.json
-  target: outputs/vocab/fon_vocab.json
+  file: outputs/datasets/vocab.json

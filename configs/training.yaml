@@ -22,5 +22,6 @@ dataset:
   n_workers: 4
 
 model:
-  configFile: configs/resnet_gru.yaml
+  decoder:
+    configFile: configs/resnet_encoder.yaml
   vocab_file: outputs/datasets/vocab.json

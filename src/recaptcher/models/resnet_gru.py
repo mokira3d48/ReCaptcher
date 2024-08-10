@@ -1,7 +1,11 @@
 import logging
+
+import numpy as np
+import cv2 as cv
 import torch
 from torch import nn
 from torch.nn import functional as F
+from analytics.models import Model
 
 
 IMAGE_WIDTH = 112
@@ -142,15 +146,21 @@ class ResNet(nn.Module):
         return x
 
 
-class Encoder(nn.Module):
+class Encoder(Model):
 
-    def __init__(self, in_channels):
+    def __init__(self, in_channels, resnet_version=50):
         super().__init__()
         self.in_channels = in_channels
-        self.conv_layers = self.create_resnet([3, 4, 6, 3])
+        self.conv_layers = None
+        if resnet_version == 50:
+            self.conv_layers = self.create_resnet([3, 4, 6, 3])
 
     def create_resnet(self, layers):
         return ResNet(ResidualBlock, layers, self.in_channels)
+
+    @classmethod
+    def load_config(cls, in_channels=3, resnet_version=50):
+        return cls(in_channels=in_channels, resnet_version=resnet_version)
 
     def forward(self, x):
         x = self.conv_layers(x)
@@ -159,14 +169,18 @@ class Encoder(nn.Module):
 
 class Decoder(nn.Module):
 
-    def __init__(self, n_chars, hidden_size=512):
+    def __init__(self,
+                 num_chars,
+                 hidden_size=512,
+                 num_layers=2,
+                 dropout_prob=0.2):
         super().__init__()
         self.gru = nn.GRU(2048,
                           hidden_size,
                           bidirectional=True,
-                          num_layers=2,
-                          dropout=0.2)
-        self.fully_connected = nn.Linear(2*hidden_size, n_chars)
+                          num_layers=num_layers,
+                          dropout=dropout_prob)
+        self.fully_connected = nn.Linear(2*hidden_size, num_chars)
         self.log_softmax = nn.LogSoftmax(dim=-1)
         # NOTE: +1 to n_chars for the blank char.
         # 2*hidden_size if bidirectional==True else hidden_size.
@@ -187,7 +201,7 @@ class Decoder(nn.Module):
         return x
 
 
-class CRNN(nn.Module):
+class CRNN(nn.Module):  # noqa
 
     def __init__(self, encoder, decoder):
         super().__init__()
@@ -195,7 +209,6 @@ class CRNN(nn.Module):
         self.decoding = decoder
 
     def forward(self, x):
-        """Method of forward propagation"""
         feature_maps = self.encoding(x)
         outputs = self.decoding(feature_maps)
         return outputs
@@ -209,53 +222,80 @@ class CTCLoss(nn.Module):
         self.ctc_loss = nn.CTCLoss(blank=blank_index)
 
     def forward(self, log_probs, targets, lengths):
-        B, T, C = log_probs.size()
+        B, T, C = log_probs.size()  # noqa
         log_probs = log_probs.permute(1, 0, 2)  # T B C
-        logits_lengths = torch.LongTensor([log_probs.size(0)]*B)
+        logit_lengths = torch.LongTensor([log_probs.size(0)]*B)
         target_lengths = lengths
         loss = self.ctc_loss(log_probs,
                              targets,
-                             logits_lengths,
+                             logit_lengths,
                              target_lengths,)
         return loss
 
 
-class CTCDecoder(nn.Module):
+class InputFunction(nn.Module):
 
-    def __init__(self, decoder):
+    def __init__(self, image_preprocess):
         super().__init__()
-        self.decoder = decoder
+        self.image_preprocess = image_preprocess
 
-    def decode_predictions(self, preds):
-        # preds = preds.permute(1, 0, 2)
-        preds = torch.softmax(preds, 2)
-        preds = torch.argmax(preds, 2)
-        preds = preds.detach().cpu().numpy()
-        print(preds.shape)
-        cap_preds = []
-        for i in range(preds.shape[0]):
-            temp = []
-            for k in preds[i, :]:
-                k = k - 1
-                if k == 0:
-                    temp.append("_")
-                else:
-                    decoded = self.decoder(k)
-                    # encoded = encoded[0]
-                    temp.append(decoded)
+    def forward(self, images):
+        preprocessed_images = []
+        for image in images:
+            image = self.image_preprocess(image)
+            preprocessed_images.append(image)
 
-            tp = "".join(temp)
-            cap_preds.append(tp)
+        preprocessed_images = np.asarray(preprocessed_images)
+        preprocessed_images = torch.tensor(preprocessed_images)
+        return preprocessed_images
 
-        return cap_preds
 
-    def forward(self, logits):
-        # cap_preds = []
-        # for vp in logits:
-        current_preds = self.decode_predictions(logits)
-        # cap_preds.extends(current_preds)
+class CTCDecoder(nn.Module):
+    """Implementation of CTC decoding"""
 
-        return current_preds
+    def __init__(self, blank_index=0):
+        super().__init__()
+        self.blank_index = blank_index
+
+    def decode_function(self, log_probs):
+        """Function of CTC sequence decoding"""
+        int_sequence = torch.argmax(log_probs, dim=-1)
+        int_sequence = int_sequence.detach().cpu().numpy()
+        # LOG.debug("integers sequence: " + str(int_sequence))
+        decoded_seq = []
+        preview_index = -1
+        for index in int_sequence:
+            if index != self.blank_index and index != preview_index:
+                decoded_seq.append(index)
+                preview_index = index
+
+        return decoded_seq
+
+    def forward(self, batch):
+        sequences_decoded = []
+        for log_probs in batch:
+            seq_returned = self.decode_function(log_probs)
+            seq_returned = torch.tensor(seq_returned, dtype=torch.long)
+            sequences_decoded.append(seq_returned)
+
+        return sequences_decoded
+
+
+class OutputFunction(nn.Module):
+
+    def __init__(self, token_decoding, blank_index=0):
+        super().__init__()
+        self.token_decoding = token_decoding
+        self.ctc_decoding = CTCDecoder(blank_index=blank_index)
+
+    def forward(self, log_probs):
+        strings_decoded = []
+        token_sequences = self.ctc_decoding(log_probs)
+        for token_sequence in token_sequences:
+            str_decoded = self.token_decoding(token_sequence)
+            strings_decoded.append(str_decoded)
+
+        return strings_decoded
 
 
 def test():
@@ -263,8 +303,9 @@ def test():
     from torchinfo import summary
 
     loss_fn = CTCLoss()
+    ctc_decoder = CTCDecoder()
     encoder = Encoder(in_channels=3)
-    decoder = Decoder(n_chars=64)
+    decoder = Decoder(num_chars=64)
     model = CRNN(encoder, decoder)
     summary(model, input_size=(16, N_CHANNELS, IMAGE_HEIGHT, IMAGE_WIDTH))
 
@@ -272,6 +313,7 @@ def test():
     y = model(x)
     print("y=", y.size())
     print("total=", sum(y[0, 0, :]))
+    print("decoded: " + str(ctc_decoder(y)))
 
     target = torch.randint(1, 20, (4, 5))
     loss = loss_fn(y, target, torch.tensor([5]*4))

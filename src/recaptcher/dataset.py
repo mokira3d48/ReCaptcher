@@ -9,22 +9,12 @@ import cv2 as cv
 import torch
 from tqdm import tqdm
 from torch.utils.data import Dataset
-from recaptcher.models.tokenizer import (CharacterTokenizer,
-                                         Trainer as TokenizerTrainer)
 
+from recaptcher.models.preprocessing import ImagePreprocessingFunction
+from recaptcher.models.preprocessing import (CharacterTokenizer,
+                                             Trainer as TokenizerTrainer)
 
 LOG = logging.getLogger(__name__)
-
-
-def preprocess_image(image, image_size=(224, 224)):
-    """Function that is used to preprocess image"""
-    image = cv.resize(image, dsize=image_size)
-    image = cv.cvtColor(image, cv.COLOR_BGR2GRAY)
-    image = np.asarray(image, dtype=np.float32)
-    image = np.divide(image, 255.0)
-    image = np.reshape(image, (image.shape[0], image.shape[1], 1))
-    image = np.transpose(image, (2, 1, 0))
-    return image
 
 
 def get_image_label(file_name):
@@ -170,13 +160,14 @@ class DatasetBuilder:
         self.image_size = kwargs['image_size']
         self.max_seq_length = kwargs['max_seq_length']
 
+        self.image_precessing = ImagePreprocessingFunction(self.image_size)
         self.tokenizer = CharacterTokenizer()
         self.tokenizer.load_from_file(self.vocab_file)
         LOG.debug(str(self.tokenizer.vocab))
 
     def run(self):
         encode_fn = self.tokenizer.encode
-        pad_token = self.tokenizer.pad
+        pad_token = self.tokenizer.pad_index
         for src_dir, tgt_dir in self.mapping.items():
             img_dir = os.path.join(tgt_dir, "img")
             lab_dir = os.path.join(tgt_dir, "lab")
@@ -191,8 +182,7 @@ class DatasetBuilder:
                 src_file_path = os.path.join(src_dir, src_file_name)
                 try:
                     image = cv.imread(src_file_path)
-                    image_preprocessed = preprocess_image(image,
-                                                          self.image_size)
+                    image_preprocessed = self.image_precessing(image)
                 except cv.error as e:
                     LOG.warning(str(e))
                     continue

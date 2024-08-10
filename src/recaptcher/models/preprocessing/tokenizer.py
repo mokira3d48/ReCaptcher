@@ -20,13 +20,13 @@ class CharacterTokenizer(object):
         return len(self.vocab)
 
     @property
-    def pad(self):
+    def pad_index(self):
         """int: Padding ID"""
         if '[pad]' in self.vocab:
             return self.vocab.index('[pad]')
 
     @property
-    def unk(self):
+    def unk_index(self):
         """int: Padding ID"""
         if '[unk]' in self.vocab:
             return self.vocab.index('[unk]')
@@ -66,6 +66,7 @@ class CharacterTokenizer(object):
     def decode(self, encoded_string):
         """Method of sequence decoding"""
         decoded_string = ''
+        final_index = self.vocab_size - 1
         for code in encoded_string:
             if code < 0 or code > final_index:
                 raise ValueError("The code " + str(code) + " is invalid.")

@@ -18,66 +18,37 @@ from analytics.metrics import Mean, CER, Value
 
 # from .models.transformer import Transformer, CosineWarmupScheduler
 from recaptcher.dataset import CaptchaDataset
-from recaptcher.models.tokenizer import CharacterTokenizer
-from recaptcher.models.resnet_gru import Encoder, Decoder, CRNN, CTCLoss
+from recaptcher.models.preprocessing import CharacterTokenizer
+from recaptcher.models.resnet_gru import (Encoder,
+                                          Decoder,
+                                          CRNN,
+                                          CTCLoss,
+                                          CTCDecoder)
 
 
 LOG = logging.getLogger(__name__)
 
 
-class CTCCER(CER):
+class CTCCER(CER):  # noqa
     """Calcul du CER pour un algorithm CTC"""
-    
+
     BLANK_INDEX = 0
 
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
         # LOG.info("CTC CER blank index: " + str(self.__class__.BLANK_INDEX))
+        self.decoder = CTCDecoder(blank_index=self.__class__.BLANK_INDEX)
 
-    @classmethod
-    def reconstruct(cls, labels):
-        new_labels = []
-        # merge same labels
-        previous = None
-        for l in labels:
-            if l != previous:
-                new_labels.append(l)
-                previous = l
-
-        # delete blank
-        new_labels = [l for l in new_labels if l != cls.BLANK_INDEX]
-        return new_labels
-
-    @classmethod
-    def ctc_greedy_decode(cls, log_prob, **kwargs):
-        intseqs = []
-        labels = np.argmax(log_prob, axis=-1)
-        # print(labels.size())
-        for label in labels:
-            intseq = cls.reconstruct(label)
-            intseqs.append(intseq)
-
-        return intseqs
-
-    def compute(self, logits):
-        inference = self.__class__
-        log_probs = F.log_softmax(logits, dim=-1)
-        log_probs = log_probs.detach().numpy()
-        intseqs = inference.ctc_greedy_decode(log_probs)
-        # intseqs = torch.tensor(intseqs, dtype=torch.long)
-        intseqs = [torch.tensor(seq, dtype=torch.long)
-                   for seq in intseqs]
-        return intseqs
-
-    def update_state(self, y_pred, y_true, lengths):
-        y_pred = self.compute(y_pred)
+    def update_state(self, y_pred, y_true, lengths):  # noqa
+        y_pred = self.decoder(y_pred)  # noqa
         targets = []
         for target, length in zip(y_true, lengths):
             targets.append(target[:length])
 
-        # print(y_pred)
-        # print()
-        # print(targets)
+        # LOG.debug("")
+        # LOG.debug("targets: " + str(targets[0]))
+        # LOG.debug("outputs: " + str(y_pred[0]))
+        # input()
         super().update_state(y_pred, targets)
 
 
@@ -204,7 +175,7 @@ class Main(object):
         self.batch_size = kwargs['dataset']['batch_size']
         self.n_workers = kwargs['dataset']['n_workers']
 
-        self.model_config_fp = kwargs['model']['configFile']
+        self.encoder_config_fp = kwargs['model']['decoder']['configFile']
         self.vocab_file = kwargs['model']['vocab_file']
 
         self.folder = kwargs['checkpoint']['folder']
@@ -220,8 +191,8 @@ class Main(object):
         #     src_vocab_size=src_vocab_size,
         #     tgt_vocab_size=tgt_vocab_size,
         # )
-        encoder = Encoder(in_channels=1)
-        decoder = Decoder(n_chars=tokenizer.vocab_size)
+        encoder = Encoder.from_config_file( self.encoder_config_fp)
+        decoder = Decoder(num_chars=tokenizer.vocab_size)
         model = CRNN(encoder, decoder)
 
         for p in model.parameters():
@@ -233,9 +204,9 @@ class Main(object):
 
         train_dataset = CaptchaDataset(self.train_ds)
         valid_dataset = CaptchaDataset(self.valid_ds)
-        
-        CTCCER.BLANK_INDEX = tokenizer.pad
-        criterion = CTCLoss(blank_index=tokenizer.pad)
+
+        CTCCER.BLANK_INDEX = tokenizer.pad_index
+        criterion = CTCLoss(blank_index=tokenizer.pad_index)
         # criterion = LabelSmoothingLoss(epsilon=self.label_smoothing_eps)
         optimizer = optim.Adam(model.parameters(),
                                lr=self.learning_rate,
@@ -263,5 +234,5 @@ class Main(object):
 
         trainer.compile(model, criterion, optimizer)
         trainer.run(self.n_epochs)
-        torch.save(encoder.load_state_dict(), 'resnet50_encoder.pt')
+        torch.save(encoder.state_dict(), 'resnet50_encoder.pt')
 

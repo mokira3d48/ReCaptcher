@@ -4,7 +4,7 @@ import logging.config
 
 from .dataset import DatasetCollector, DatasetVocabBuilder, DatasetBuilder
 from .training import Main as Training
-from .predictions import Prediction
+from .predictions import Main
 from .utils import load_args
 
 
@@ -17,7 +17,7 @@ actions = {
     'DatasetVocabBuilder': DatasetVocabBuilder,
     'DatasetBuilder': DatasetBuilder,
     'Training': Training,
-    'Prediction': Prediction,
+    'Prediction': Main,
 }
 
 
