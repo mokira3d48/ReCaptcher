@@ -12,6 +12,18 @@ ant this projet adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.
 ## [Unreleased]
 ### Added
 
+- Dataset collect is added.
+- Vocab of tokenizer cant be built.
+- Dataset building to NumPY file is added.
+- Dataset loading is added.
+- Training process is ready.
+- Prediction with Tkinter interface is added.
+- Saving of best model is added.
+
+### Removed
+
+- Saving model every 5 epochs is removed.
+
 
 [Unreleased]: https://github.com/mokira3d48/ReCaptcher
 
