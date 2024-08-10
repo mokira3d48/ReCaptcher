@@ -293,6 +293,7 @@ class Trainer(object):
             # free memory of `train_loader`;
             del train_loader
             gc.collect()
+
             if not valid_loader:
                 finalise_epoch(epoch + 1)
                 continue

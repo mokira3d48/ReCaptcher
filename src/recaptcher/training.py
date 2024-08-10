@@ -1,4 +1,5 @@
 """Transformer model of language training"""
+import json
 import os
 import logging
 
@@ -130,24 +131,53 @@ class CRNNTrainer(Trainer):
         return super().run(*args, **kwargs)
 
 
-class SavedModelCallback(Callback):
+class BestModelSavingCallback(Callback):
 
-    def __init__(self, model_file_path, saving_step, **kwargs):
+    def __init__(self, name, dir_path, **kwargs):
         super().__init__(**kwargs)
-        self.model_file_path = model_file_path
-        self.saving_step = saving_step
-        self.n_epochs = 0
+        self.name = name
+        self.dir_path = os.path.join(dir_path, f'{name}_model/')
+        self.best_scores = {}
 
-        dir_name = os.path.dirname(model_file_path)
-        if not os.path.isdir(dir_name):
-            os.makedirs(dir_name)
+        if not os.path.isdir(self.dir_path):
+            os.makedirs(self.dir_path)
+
+        self.best_value_fp = os.path.join(self.dir_path, 'best.json')
+        if os.path.isfile(self.best_value_fp):
+            with open(self.best_value_fp, mode='r', encoding='UTF-8') as file:
+                self.best_scores = json.load(file)
+        else:
+            self.update_scores_dict()
+
+    def update_scores_dict(self, **kwargs):
+        self.best_scores.update(kwargs)
+        with open(self.best_value_fp, mode='w', encoding='UTF-8') as file:
+            scores_jsonify = json.dumps(self.best_scores, indent=4)
+            file.write(scores_jsonify)
+
+    def save_model(self):
+        model = self.trainer.model
+        model_weights = model.state_dict()
+        torch.save(model_weights, os.path.join(self.dir_path, 'best.pt'))
 
     def on_epoch_end(self):
         """Method will be executed on epoch end"""
-        self.n_epochs += 1
-        if self.n_epochs % self.saving_step == 0:
-            weights = self.trainer.model.state_dict()
-            torch.save(weights, self.model_file_path)
+        current_scores = {
+            'CER': self.trainer.valid_results['metrics_CTCCER'][-1].item(),
+            'CTC': self.trainer.valid_results['losses_Mean'][-1].item(),
+        }
+        if not self.best_scores:
+            self.save_model()
+            self.update_scores_dict(**current_scores)
+            return
+
+        has_best_cer = current_scores['CER'] < self.best_scores['CER']
+        has_best_ctc = current_scores['CTC'] < self.best_scores['CTC']
+        if has_best_cer or has_best_ctc:
+            # LOG.debug("old best: " + str(self.best_scores))
+            # LOG.debug("current: " + str(current_cer))
+            self.save_model()
+            self.update_scores_dict(**current_scores)
 
 
 class Main(object):
@@ -157,7 +187,6 @@ class Main(object):
         self.n_epochs = kwargs['n_epochs']
         self.report_dir = kwargs['report_dir']
         self.saved_model = kwargs['savedModel']
-        self.saving_step = kwargs['savingStep']
 
         # self.label_smoothing_eps = kwargs['LabelSmoothing']['epsilon']
 
@@ -226,9 +255,9 @@ class Main(object):
                               n_workers=self.n_workers)
 
         report = TrainRepport(trainer, outputs_dir=self.report_dir)
-        saving = SavedModelCallback(self.saved_model,
-                                    self.saving_step,
-                                    trainer=trainer)
+        saving = BestModelSavingCallback(self.name,
+                                         self.report_dir,
+                                         trainer=trainer)
         trainer.callbacks.append(report)
         trainer.callbacks.append(saving)
 

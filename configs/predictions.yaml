@@ -5,7 +5,7 @@ encoder:
   configFile: configs/resnet_encoder.yaml
 
 model:
-  saved: outputs/resnet_lstm.pt
+  saved: outputs/runs/resnet_gru_model/best.pt
   checkpoint: null
 
 vocab:
