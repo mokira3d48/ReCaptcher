@@ -1,5 +1,7 @@
 import logging
 import gc
+import time
+
 import torch
 from torch.utils.data import DataLoader
 from .pbar import TrainProgress
@@ -254,6 +256,7 @@ class Trainer(object):
             start = 0
 
         for epoch in range(start, n_epochs):
+            time.sleep(1)
             train_loader = DataLoader(dataset=self._train_dataset,
                                       batch_size=self.batch_size,
                                       num_workers=self.n_workers,
