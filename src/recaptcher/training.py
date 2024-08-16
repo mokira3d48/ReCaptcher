@@ -30,6 +30,21 @@ from recaptcher.models.resnet_gru import (Encoder,
 LOG = logging.getLogger(__name__)
 
 
+def load_from_file(model, file_path):
+    """Function to load model from the model file path"""
+    loaded = torch.load(file_path)
+    model.load_state_dict(loaded)
+    print("model is loaded from saving file path.")
+
+
+def load_from_checkpoint(model, file_path):
+    """Function to load model from checkpoint file"""
+    loaded = torch.load(file_path)
+    if 'model' in loaded:
+        model.load_state_dict(loaded['model'])
+        LOG.info("model is loaded from checkpoint file.")
+
+
 class CTCCER(CER):  # noqa
     """Calcul du CER pour un algorithm CTC"""
 
@@ -187,6 +202,7 @@ class Main(object):
         self.n_epochs = kwargs['n_epochs']
         self.report_dir = kwargs['report_dir']
         self.saved_model = kwargs['savedModel']
+        self.model_file_path = kwargs['model_file_path']
 
         # self.label_smoothing_eps = kwargs['LabelSmoothing']['epsilon']
 
@@ -227,6 +243,9 @@ class Main(object):
         for p in model.parameters():
             if p.dim() > 1:
                 nn.init.xavier_uniform_(p)
+        
+        if self.model_file_path:
+            load_from_file(model, self.model_file_path)
 
         x = torch.randn(self.batch_size, 1, 112, 112)
         summary(model, input_data=x)

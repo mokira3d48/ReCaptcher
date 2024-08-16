@@ -2,9 +2,9 @@ numpy<2
 matplotlib
 scikit-image==0.24.0
 opencv-python==4.10.0.84
-torch==2.3.1
 torchinfo==1.8.0
 torchvision
+tk
 tqdm
 pyyaml
 pytest==6.2.5

@@ -3,6 +3,7 @@ name: resnet_gru
 n_epochs: 200
 report_dir: outputs/runs/
 savedModel: outputs/resnet_lstm.pt
+model_file_path: outputs/runs/resnet_gru_model_v1/best.pt
 
 optim:
   learning_rate: 0.001
@@ -18,7 +19,7 @@ dataset:
   valid: outputs/dataset_norm/valid
   test: outputs/dataset_norm/test
   batch_size: 32
-  n_workers: 2
+  n_workers: 4
 
 model:
   decoder:

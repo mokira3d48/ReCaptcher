@@ -4,9 +4,9 @@ import time
 import torch
 # from tokenizers import Tokenizer
 
-import tkinter as tk
-import tkinter.filedialog
-from PIL import Image, ImageTk  # noqa
+# import tkinter as tk
+# import tkinter.filedialog
+# from PIL import Image, ImageTk  # noqa
 
 import cv2 as cv
 
