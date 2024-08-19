@@ -212,7 +212,7 @@ class Trainer(object):
                 self._metrics[name].instances.append(metric_cls())
 
         pbar = TrainProgress(length=0,
-                             bins=15,
+                             bins=25,
                              bchr='█',
                              empt='░',
                              lchr='',
