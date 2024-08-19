@@ -21,8 +21,8 @@ LOG = logging.getLogger(__name__)
 # 	return re.findall(pattern, string)
 
 
-def get_file_name(self, file_name):
-    """Funtion to get the file name without its extension
+def get_file_name(file_name):
+    """Function to get the file name without its extension
 
     :param file_name: The file name with its extension.
     :type file_name: str
@@ -95,12 +95,12 @@ class CheckpointManager(object):
         """Methode de suppression des vieux points de suavegardes"""
         if len(self._lasted_checkpoints) <= self._last_ckp_max_count:
             return
-        
+
         old_ckp_files = self._lasted_checkpoints[:-self._last_ckp_max_count]
         for file_path in old_ckp_files:
             if os.path.isfile(file_path):
                 os.remove(file_path)
-        
+
         start = self._last_ckp_max_count
         self._lasted_checkpoints = self._lasted_checkpoints[-start:]
         self._lasted_checkpoints = sorted(self._lasted_checkpoints)
@@ -108,8 +108,40 @@ class CheckpointManager(object):
     def put(self, attr_name, value):
         self._state[attr_name] = value
 
-    def get(self, attr_name):
-        return self._state.get(attr_name)
+    def get(self, attr_name, default=None):
+        return self._state.get(attr_name, default)
+
+    def _get_data_saved(self):
+        data_saved = {}
+        for attr, value in self._state.items():
+            if not isinstance(value, nn.Module):
+                data_saved[attr] = value
+            else:
+                weights = value.state_dict()
+                data_saved[attr] = weights
+
+        return data_saved
+
+    def _get_ckp_file_path(self, latest_id=None):
+        current_dt = datetime.now()
+        time = current_dt.strftime('%H%M%S')
+        date = current_dt.strftime('%Y%m%d')
+        self._id = (self._id + 1) if not latest_id else int(latest_id)
+        ckp_fn = self._fn_format.format(date=date,
+                                        time=time,
+                                        name=self._name,
+                                        ckpid=self._id)
+        ckp_fp = os.path.join(self._ckp_dir, ckp_fn)
+        return ckp_fn, ckp_fp
+
+    def _save_safely(self, data_saved, file_path):
+        try:
+            torch.save(data_saved, file_path)
+        except RuntimeError as e:
+            LOG.error(str(e))
+        except KeyboardInterrupt:
+            LOG.info("Waiting for saving...")
+            self._save_safely(data_saved, file_path)
 
     def save(self, latest_id = None):
         """Saving method of a checkpoint
@@ -121,47 +153,57 @@ class CheckpointManager(object):
         if latest_id and int(latest_id) == 0:
             raise ValueError("Value `0` is not allowed.")
 
-        data_saved = {}
-        for attr, value in self._state.items():
-            if not isinstance(value, nn.Module):
-                data_saved[attr] = value
-            else:
-                weights = value.state_dict()
-                data_saved[attr] = weights
+        # data_saved = {}
+        # for attr, value in self._state.items():
+        #     if not isinstance(value, nn.Module):
+        #         data_saved[attr] = value
+        #     else:
+        #         weights = value.state_dict()
+        #         data_saved[attr] = weights
+        data_saved = self._get_data_saved()
 
-        current_dt = datetime.now()
-        time = current_dt.strftime('%H%M%S')
-        date = current_dt.strftime('%Y%m%d')
-        self._id = (self._id+1) if not latest_id else int(latest_id)
-        ckp_fn = self._fn_format.format(date=date,
-                                        time=time,
-                                        name=self._name,
-                                        ckpid=self._id)
-        ckp_fp = os.path.join(self._ckp_dir, ckp_fn)
+        # current_dt = datetime.now()
+        # time = current_dt.strftime('%H%M%S')
+        # date = current_dt.strftime('%Y%m%d')
+        # self._id = (self._id+1) if not latest_id else int(latest_id)
+        # ckp_fn = self._fn_format.format(date=date,
+        #                                 time=time,
+        #                                 name=self._name,
+        #                                 ckpid=self._id)
+        # ckp_fp = os.path.join(self._ckp_dir, ckp_fn)
+        ckp_fn, ckp_fp = self._get_ckp_file_path()
 
-        try:
-            torch.save(data_saved, ckp_fp)
-        except RuntimeError as e:
-            LOG.warning(str(e))
+        # try:
+        #     torch.save(data_saved, ckp_fp)
+        # except RuntimeError as e:
+        #     LOG.warning(str(e))
+        self._save_safely(data_saved, ckp_fp)
 
-        metafp = os.path.join(self._ckp_dir, self._meta_fn)
-        with open(metafp, mode='w', encoding='UTF-8') as metaf:
+        meta_fp = os.path.join(self._ckp_dir, self._meta_fn)
+        with open(meta_fp, mode='w', encoding='UTF-8') as meta_f:
             metadata = {'latest_fn': ckp_fn, 'id': self._id}
             json_format = json.dumps(metadata, indent=4)
-            metaf.write(json_format)
+            meta_f.write(json_format)
 
+        self._latest_fn = ckp_fn
         self._lasted_checkpoints.append(ckp_fp)
         self.remove_old_checkpoints()
+
+    def partial_save(self):
+        latest_fp = os.path.join(self._ckp_dir, self._latest_fn)
+        # LOG.debug(latest_fp)
+        data_saved = self._get_data_saved()
+        self._save_safely(data_saved, latest_fp)
 
     def _retrieve_latest(self):
         if self._latest_fn:
             return
 
-        metafp = os.path.join(self._ckp_dir, self._meta_fn)
-        if not os.path.isfile(metafp):
+        meta_fp = os.path.join(self._ckp_dir, self._meta_fn)
+        if not os.path.isfile(meta_fp):
             return
 
-        with open(metafp, mode='r', encoding='UTF-8') as metaf:
+        with open(meta_fp, mode='r', encoding='UTF-8') as metaf:
             latest = json.loads(metaf.read())
             self._latest_fn = latest.get('latest_fn')
             self._id = int(latest.get("id", 0))
@@ -186,7 +228,7 @@ class CheckpointManager(object):
 
         if self._id == 0:
             # the id is not found ion the metafile.
-            # We can recovery it from latest file name.
+            # We can retrieve it from latest file name.
             # get name without ext;
             file_name_w = get_file_name(self._latest_fn)
             fn_split = file_name_w.split('_')

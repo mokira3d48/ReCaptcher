@@ -1,6 +1,6 @@
 action: Training
 name: resnet_gru
-n_epochs: 200
+n_epochs: 50
 report_dir: outputs/runs/
 savedModel: outputs/resnet_lstm.pt
 model_file_path: outputs/runs/resnet_gru_model_v1/best.pt

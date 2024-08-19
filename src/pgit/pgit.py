@@ -67,6 +67,7 @@ class ProgressIter:
 	@length.setter
 	def length(self, value):
 		self._length = value
+		self._data['n_iters'] = value
 
 	def _format_time(self, millis, str_format = None):
 		"""Function to converte milliseconds to hh:mm:ss:millis
@@ -76,7 +77,7 @@ class ProgressIter:
 		:rtype: str
 		"""
 		if not str_format:
-			str_format = "{days}:{hours:02d}:{mins:02d}:{secs:02d}:{millis:03d}"
+			str_format = "{days}:{hours:02d}:{mins:02d}:{secs:02d}.{millis:03d}"
 
 		sec = millis // 1000
 		millis = millis % 1000

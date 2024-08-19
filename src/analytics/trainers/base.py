@@ -3,7 +3,8 @@ import gc
 import time
 
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader as PyTorchDataLoader
+from analytics.utils.data import DataLoader
 from .pbar import TrainProgress
 
 
@@ -40,6 +41,7 @@ class Trainer(object):
         metric_classes=None,
         optim_rate=None,
         checkpoint=None,
+        partial_ckp_rate=25,
         pbar_format=None,
         log_format=None,
     ):
@@ -58,6 +60,7 @@ class Trainer(object):
 
         self.batch_size = batch_size
         self.checkpoint = checkpoint
+        self.partial_ckp_rate = partial_ckp_rate
         self.n_workers = n_workers
         self.metric_classes = metric_classes
         self.callbacks = []
@@ -219,19 +222,36 @@ class Trainer(object):
                              log_format=self._log_format,)
         start = 0
         prev_n_epochs = 0
+        batch_index = 0
+        batch_indices = None
+        old_results = None
+        old_metrics = None
+        step = 'train'
         if self.checkpoint:
             self.checkpoint.put('train_results', {})
             self.checkpoint.put('valid_results', {})
             self.checkpoint.put('n_epochs', n_epochs)
             self.checkpoint.put('epoch', 0)
+            self.checkpoint.put('batch_index', 0)
+            self.checkpoint.put('batch_indices', None)
+            self.checkpoint.put('tmp_results', None)
+            self.checkpoint.put('tmp_metrics', None)
+            self.checkpoint.put('training_step', 'train')
             if self.checkpoint.is_available():
                 LOG.info("\033[92mCheckpoint detected.\033[0m")
                 self.checkpoint.load_latest()
+            else:
+                self.checkpoint.save()
 
             self.train_results = self.checkpoint.get('train_results')
             self.valid_results = self.checkpoint.get('valid_results')
             prev_n_epochs = self.checkpoint.get('n_epochs')
             start = self.checkpoint.get('epoch')
+            batch_index = self.checkpoint.get('batch_index', 0)
+            batch_indices = self.checkpoint.get('batch_indices')
+            old_results = self.checkpoint.get('tmp_results')
+            old_metrics = self.checkpoint.get('tmp_metrics')
+            step = self.checkpoint.get('training_step', 'train')
 
         valid_loader = None
         if self._valid_dataset:
@@ -252,95 +272,214 @@ class Trainer(object):
             pbar.finalise()
             pbar.reset()
 
+        train_loader = DataLoader(dataset=self._train_dataset,
+                                  batch_size=self.batch_size,
+                                  num_workers=self.n_workers,
+                                  initial_batch_indices=batch_indices,
+                                  shuffle=True)
+
+        def partial_checkpoint(batch_index=0,
+                               batch_indices=None,
+                               results=None,
+                               metrics=None,
+                               step=''):
+            if self.checkpoint:
+                self.checkpoint.put('batch_index', batch_index)
+                self.checkpoint.put('batch_indices', batch_indices)
+                self.checkpoint.put('tmp_results', results)
+                self.checkpoint.put('tmp_metrics', metrics)
+                self.checkpoint.put('training_step', step)
+                self.checkpoint.partial_save()
+
+            return batch_index, batch_indices, results, metrics, step
+
+        def merge_result(old_result, curr_result):
+            if not isinstance(old_result, dict) \
+                    or not isinstance(curr_result, dict):
+                return curr_result
+
+            for key, value in old_result.items():
+                if key in curr_result:
+                    val1 = old_result[key]
+                    val2 = curr_result[key]
+                    curr_result[key] = (val1 + val2) / 2
+
+            return curr_result
+
         if restart_epochs or start >= n_epochs or n_epochs != prev_n_epochs:
             start = 0
 
         for epoch in range(start, n_epochs):
             time.sleep(1)
-            train_loader = DataLoader(dataset=self._train_dataset,
-                                      batch_size=self.batch_size,
-                                      num_workers=self.n_workers,
-                                      shuffle=True)
-            pbar.length = len(train_loader)
-            pbar.loginfo.update(dict(
-                epoch=(epoch+1),
-                n_epochs=n_epochs,
-                message='train...',
-            ))
-            pbar.log()
-            self.on_start_train()
-            metric_results = None
-            result = {}
-            for index, batch in enumerate(train_loader):
-                if not self._optim_rate:
-                    result = self.train_step(*batch)
-                else:
-                    result = self.estimate_step(*batch)
-                    if (index % self._optim_rate) == 0:
-                        self.optimize_step()
+            metrics = None
+            results = None
+            if step == 'train':
+                pbar.length = len(train_loader)
+                pbar.loginfo.update(dict(
+                    epoch=(epoch+1),
+                    n_epochs=n_epochs,
+                    message='train...',
+                ))
 
-                metric_results = self._get_metric_results()
-                pbar.loginfo.update(metric_results)
                 pbar.log()
-                pbar.step(1)
-                if not isinstance(result, dict):
-                    continue
+                self.on_start_train()
 
-                pbar.loginfo.update(result)
-                pbar.log()
+                train_loader.set_batch_index(batch_index)
+                pbar.step(batch_index+1)
 
-            self._update_result(self.train_results, result)
-            self._update_result(self.train_results, metric_results)
-            self._reset_metrics_state()  # To reset metric state;
+                if isinstance(old_metrics, dict):
+                    pbar.loginfo.update(old_metrics)
 
-            # free memory of `train_loader`;
-            del train_loader
-            gc.collect()
+                if isinstance(old_results, dict):
+                    pbar.loginfo.update(old_results)
+
+                for index, batch in enumerate(train_loader):
+                    if not self._optim_rate:
+                        results = self.train_step(*batch)
+                    else:
+                        results = self.estimate_step(*batch)
+                        if (index % self._optim_rate) == 0:
+                            self.optimize_step()
+
+                    metrics = self._get_metric_results()
+
+                    if old_metrics is not None or old_results is not None:
+                        # if the old metric or result values are found,
+                        # then we use then to merge its values with
+                        # the current metric and result values.
+                        # LOG.debug('old metrics found: ' + str(old_metrics))
+                        # LOG.debug('old results found: ' + str(old_results))
+                        metrics = merge_result(old_metrics, metrics)
+                        results = merge_result(old_results, results)
+                        old_metrics = None
+                        old_results = None
+
+                    pbar.loginfo.update(metrics)
+                    pbar.log()
+                    pbar.step(1)
+
+                    if train_loader.batch_index % self.partial_ckp_rate == 0:
+                        partial_checkpoint(train_loader.batch_index,
+                                           train_loader.batch_indices,
+                                           results,
+                                           metrics,
+                                           'train',
+                                           )
+
+                    if not isinstance(results, dict):
+                        continue
+
+                    pbar.loginfo.update(results)
+                    pbar.log()
+
+                self._update_result(self.train_results, results)
+                self._update_result(self.train_results, metrics)
+                self._reset_metrics_state()  # To reset metric state;
+
+                returned = partial_checkpoint()
+                batch_index = returned[0]
+                batch_indices = returned[1]
+                results = returned[2]
+                metrics = returned[3]
+                step = returned[4]
+
+                # free memory of `train_loader`;
+                # del train_loader
+                # gc.collect()
 
             if not valid_loader:
                 finalise_epoch(epoch + 1)
                 continue
-
-            pbar.log('message', 'train done!')
-            pbar.finalise()
-            pbar.reset()
-            pbar.length = len(valid_loader)
-            self._run_callback('on_before_eval')
-            try:
-                pbar.loginfo.update(
-                    dict(
-                        epoch=(epoch + 1),
-                        n_epochs=n_epochs,
-                        message='eval...'
+            
+            step = 'valid'
+            partial_checkpoint(step=step)
+            
+            if step == 'valid':
+                pbar.log('message', 'train done!')
+                pbar.finalise()
+                pbar.reset()
+                pbar.length = len(valid_loader)
+                self._run_callback('on_before_eval')
+                try:
+                    pbar.loginfo.update(
+                        dict(
+                            epoch=(epoch + 1),
+                            n_epochs=n_epochs,
+                            message='eval...'
+                        )
                     )
-                )
-                # self.pbar.log('epoch', (epoch+1))
-                # self.pbar.log('n_epochs', n_epochs)
-                # self.pbar.log('message', 'train...')
-                pbar.log()
-                self.on_start_eval()
-                with torch.no_grad():
-                    result = {}
-                    for batch in valid_loader:
-                        result = self.eval_step(*batch)
+                    # self.pbar.log('epoch', (epoch+1))
+                    # self.pbar.log('n_epochs', n_epochs)
+                    # self.pbar.log('message', 'train...')
+                    pbar.log()
+                    self.on_start_eval()
+                    with torch.no_grad():
+                        valid_loader.set_batch_index(batch_index)
+                        pbar.step(batch_index+1)
 
-                        metric_results = self._get_metric_results()
-                        pbar.loginfo.update(metric_results)
-                        pbar.log()
-                        pbar.step(1)
-                        if not isinstance(result, dict):
-                            continue
+                        # Update progress bar with old metric and result
+                        # values.
+                        if isinstance(old_metrics, dict):
+                            pbar.loginfo.update(old_metrics)
 
-                        pbar.loginfo.update(result)
-                        pbar.loginfo.update()
-                        pbar.log()
+                        if isinstance(old_results, dict):
+                            pbar.loginfo.update(old_results)
 
-                    self._update_result(self.valid_results, result)
-                    self._update_result(self.valid_results, metric_results)
-                    self._reset_metrics_state()  # To reset metric state;
-            except NotImplemented:
-                LOG.warning("The evaluation method is not implemented yet.")
+                        for index, batch in enumerate(valid_loader):
+                            results = self.eval_step(*batch)
 
+                            metrics = self._get_metric_results()
+
+                            if old_metrics is not None\
+                                    or old_results is not None:
+                                # if the old metric or result values are found,
+                                # then we use then to merge its values with
+                                # the current metric and result values.
+                                # LOG.debug(
+                                #     'old metrics found: ' + str(old_metrics))
+                                # LOG.debug(
+                                #     'old results found: ' + str(old_results))
+                                metrics = merge_result(old_metrics, metrics)
+                                results = merge_result(old_results, results)
+                                old_metrics = None
+                                old_results = None
+
+                            pbar.loginfo.update(metrics)
+                            pbar.log()
+                            pbar.step(1)
+                            if valid_loader.batch_index % self.partial_ckp_rate == 0:
+                                partial_checkpoint(
+                                    valid_loader.batch_index,
+                                    valid_loader.batch_indices,
+                                    results,
+                                    metrics,
+                                    'valid',
+                                 )
+
+                            if not isinstance(results, dict):
+                                continue
+
+                            pbar.loginfo.update(results)
+                            pbar.loginfo.update()
+                            pbar.log()
+
+                        self._update_result(self.valid_results, results)
+                        self._update_result(self.valid_results, metrics)
+                        self._reset_metrics_state()  # To reset metric state;
+                        
+                        returned = partial_checkpoint()
+                        batch_index = returned[0]
+                        batch_indices = returned[1]
+                        results = returned[2]
+                        metrics = returned[3]
+                        step = returned[4]
+                except NotImplementedError:
+                    LOG.warning(
+                        "The evaluation method is not implemented yet."
+                    )
+
+            step = 'train'
+            partial_checkpoint(step=step)
             finalise_epoch(epoch + 1)
             print("")
 

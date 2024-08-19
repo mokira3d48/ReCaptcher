@@ -1,4 +1,7 @@
 import os
+import logging
+import logging.config
+
 import torch
 import torch.nn.functional as F
 from torch import nn
@@ -12,6 +15,14 @@ from analytics.metrics import Mean, PSNR, SSIM, NCC
 from analytics.trainers.checkpoints import CheckpointManager
 from analytics.trainers.callbacks import Callback
 from analytics.trainers.training_report import TrainRepport
+
+
+LOGGING_FILE_NAME = 'logging.conf'
+if os.path.isfile(LOGGING_FILE_NAME):
+    logging.config.fileConfig(LOGGING_FILE_NAME)
+
+
+LOG = logging.getLogger(__name__)
 
 
 class Encoder(Model):
@@ -218,6 +229,7 @@ def main():
 
     checkpoint = CheckpointManager("autoencoder", "outputs/checkpoint_dir/")
     trainer = AutoencoderTrainer(train_dataset=mnist_data,
+                                 valid_dataset=mnist_data,
                                  checkpoint=checkpoint,
                                  batch_size=32)
 
