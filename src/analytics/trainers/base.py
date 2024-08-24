@@ -253,11 +253,25 @@ class Trainer(object):
             old_metrics = self.checkpoint.get('tmp_metrics')
             step = self.checkpoint.get('training_step', 'train')
 
+        valid_batch_indices = None
+        train_batch_indices = None
+        if step == 'train':
+            train_batch_indices = batch_indices
+        elif step == 'valid':
+            valid_batch_indices = batch_indices
+
+        train_loader = DataLoader(dataset=self._train_dataset,
+                                  batch_size=self.batch_size,
+                                  num_workers=self.n_workers,
+                                  initial_batch_indices=train_batch_indices,
+                                  shuffle=True)
+
         valid_loader = None
         if self._valid_dataset:
             valid_loader = DataLoader(dataset=self._valid_dataset,
                                       batch_size=self.batch_size,
                                       num_workers=self.n_workers,
+                                      initial_batch_indices=valid_batch_indices,
                                       shuffle=False)
 
         def finalise_epoch(current_epoch):
@@ -272,17 +286,11 @@ class Trainer(object):
             pbar.finalise()
             pbar.reset()
 
-        train_loader = DataLoader(dataset=self._train_dataset,
-                                  batch_size=self.batch_size,
-                                  num_workers=self.n_workers,
-                                  initial_batch_indices=batch_indices,
-                                  shuffle=True)
-
         def partial_checkpoint(batch_index=0,
                                batch_indices=None,
                                results=None,
                                metrics=None,
-                               step=''):
+                               step='train'):
             if self.checkpoint:
                 self.checkpoint.put('batch_index', batch_index)
                 self.checkpoint.put('batch_indices', batch_indices)

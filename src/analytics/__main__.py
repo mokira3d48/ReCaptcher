@@ -7,6 +7,7 @@ import torch.nn.functional as F
 from torch import nn
 from torch import optim
 from torchvision import transforms, datasets
+from torch.utils.data import random_split
 
 from analytics.models import Input, Model
 from analytics.trainers import Trainer
@@ -213,6 +214,13 @@ def main():
     # data_loader = DataLoader(dataset=mnist_data,
     #                          batch_size=64,
     #                          shuffle=True)
+    
+    # Étape 3 : Définir les tailles des ensembles
+    train_size = int(0.8 * len(mnist_data))  # 80% pour l'entraînement
+    val_size = len(mnist_data) - train_size   # 20% pour la validation
+    
+    train_dataset, val_dataset = random_split(mnist_data,
+                                              [train_size, val_size])
 
     # dataiter = iter(data_loader)
     # images, labels = next(dataiter)
@@ -228,8 +236,8 @@ def main():
     optimizer = optim.AdamW(model.parameters(), lr=1e-3, weight_decay=1e-5)
 
     checkpoint = CheckpointManager("autoencoder", "outputs/checkpoint_dir/")
-    trainer = AutoencoderTrainer(train_dataset=mnist_data,
-                                 valid_dataset=mnist_data,
+    trainer = AutoencoderTrainer(train_dataset=train_dataset,
+                                 valid_dataset=val_dataset,
                                  checkpoint=checkpoint,
                                  batch_size=32)
 
